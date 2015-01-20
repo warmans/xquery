@@ -21,8 +21,6 @@ func checkError(err error) {
 	}
 }
 
-//import _ "github.com/go-sql-driver/mysql"
-
 type QueryRunner struct {
 	Hosts map[string]string
 }
@@ -35,10 +33,12 @@ func (qr *QueryRunner) Execute(query *Query, responseWriter io.Writer) {
 		go qr.runQueryOnHost(name, dsn, query, resultChannel)
 	}
 
-	timeout := false
+	//write CSV to response stream
 	c := csv.NewWriter(responseWriter)
 
+	timeout := false
 	todo := len(qr.Hosts)
+
 	for timeout != true && todo > 0 {
 		select {
 		case row := <-resultChannel:
@@ -47,7 +47,7 @@ func (qr *QueryRunner) Execute(query *Query, responseWriter io.Writer) {
 			} else {
 				c.Write(row)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(time.Second * 10): //todo: implement actual timeout member of Query
 			timeout = true
 		default:
 			time.Sleep(time.Millisecond)
@@ -62,7 +62,7 @@ func (qr *QueryRunner) runQueryOnHost(name string, dsn string, query *Query, res
 	checkError(err)
 	defer db.Close()
 
-	rows, err := db.Query("SELECT * FROM test1")
+	rows, err := db.Query(query.Sql)
 	checkError(err)
 	defer rows.Close()
 
@@ -95,7 +95,8 @@ func (qr *QueryRunner) runQueryOnHost(name string, dsn string, query *Query, res
 }
 
 type Query struct {
-	Sql string
+	Sql     string
+	Timeout int
 }
 
 func main() {
