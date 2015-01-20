@@ -2,10 +2,13 @@ package main
 
 import (
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-martini/martini"
 )
@@ -21,19 +24,39 @@ func checkError(err error) {
 //import _ "github.com/go-sql-driver/mysql"
 
 type QueryRunner struct {
-	hosts map[string]string
+	Hosts map[string]string
 }
 
-func (qr *QueryRunner) Execute(query *Query) {
+func (qr *QueryRunner) Execute(query *Query, responseWriter io.Writer) {
 
-	for name, dsn := range qr.hosts {
-		log.Print(name, " ", dsn)
-		qr.runQueryOnHost(dsn, query)
+	resultChannel := make(chan []string)
+
+	for name, dsn := range qr.Hosts {
+		go qr.runQueryOnHost(name, dsn, query, resultChannel)
 	}
 
+	timeout := false
+	c := csv.NewWriter(responseWriter)
+
+	todo := len(qr.Hosts)
+	for timeout != true && todo > 0 {
+		select {
+		case row := <-resultChannel:
+			if row == nil {
+				todo--
+			} else {
+				c.Write(row)
+			}
+		case <-time.After(time.Second):
+			timeout = true
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	c.Flush()
 }
 
-func (qr *QueryRunner) runQueryOnHost(dsn string, query *Query) {
+func (qr *QueryRunner) runQueryOnHost(name string, dsn string, query *Query, resultChannel chan []string) {
 
 	db, err := sql.Open("mysql", dsn)
 	checkError(err)
@@ -57,18 +80,18 @@ func (qr *QueryRunner) runQueryOnHost(dsn string, query *Query) {
 		err = rows.Scan(scanArgs...)
 		checkError(err)
 
-		record := make(map[string]interface{})
+		record := make([]string, len(columns))
 
 		for i, col := range values {
 			if col != nil {
-				record[columns[i]] = fmt.Sprintf("%s", string(col.([]byte)))
+				record[i] = fmt.Sprintf("%s", string(col.([]byte)))
 			}
 		}
 
-		s, _ := json.Marshal(record)
-		fmt.Printf("%s\n", s)
+		resultChannel <- record
 	}
 
+	resultChannel <- nil
 }
 
 type Query struct {
@@ -78,13 +101,18 @@ type Query struct {
 func main() {
 
 	hosts := make(map[string]string)
-	hosts["localhost"] = "root:@/xquery"
-
-	qr := QueryRunner{hosts: hosts}
+	hosts["localhost1"] = "root:@/xquery"
+	hosts["localhost2"] = "root:@/xquery"
+	hosts["localhost3"] = "root:@/xquery"
+	hosts["localhost4"] = "root:@/xquery"
 
 	m := martini.Classic()
 
-	m.Post("/query", func(req *http.Request) (int, string) {
+	//services
+	m.Map(&QueryRunner{Hosts: hosts})
+
+	//routes
+	m.Post("/query", func(res http.ResponseWriter, req *http.Request, qr *QueryRunner) {
 
 		decoder := json.NewDecoder(req.Body)
 
@@ -94,9 +122,7 @@ func main() {
 			log.Panic(err)
 		}
 
-		qr.Execute(&query)
-
-		return 200, query.Sql
+		qr.Execute(&query, res)
 	})
 
 	m.Run()
