@@ -1,0 +1,4 @@
+dbs:
+    localhost1: "root:@/xquery"
+    localhost2: "root:@/xquery"
+    localhost3: "roo:@/xquery"
