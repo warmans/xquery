@@ -1,0 +1,7 @@
+#users must supply a valid key to use the API
+authkeys:
+    default: "secret"
+
+#all databases in list will be queried
+dbs:
+    localhost1: "root:@/xquery?timeout=10s" #note timeout is supplied in DSN per host
